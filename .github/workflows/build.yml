@@ -2,23 +2,34 @@ name: Build
 on:
   push:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
-      - name: Build from zip
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unpack source zip into template
         run: |
-          mkdir work
-          unzip -q ./*.zip -d work
-          cd "$(dirname "$(find work -name gradlew | head -1)")"
+          rm -rf src/main/java/* src/main/resources/*
+          mkdir -p /tmp/s src/main/java src/main/resources
+          unzip -q coindebug-merged.zip -d /tmp/s
+          rsync -am --include='*/' --include='*.java' --exclude='*' /tmp/s/ src/main/java/
+          rsync -am --exclude='*.java' --exclude='META-INF/' /tmp/s/ src/main/resources/
+
+      - name: Build
+        run: |
           chmod +x gradlew
           ./gradlew build --no-daemon
+
       - uses: actions/upload-artifact@v4
         with:
-          name: astrix-debug
-          path: work/**/build/libs/astrix-debug-*.jar
+          name: mod-jar
+          path: build/libs/*.jar
