@@ -3,6 +3,9 @@ on:
   push:
   workflow_dispatch:
 
+env:
+  TEMPLATE_REF: master   # có thể đổi thành mã commit cụ thể nếu cần
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,17 +17,24 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Get Meteor addon template
+        run: |
+          git clone https://github.com/MeteorDevelopment/meteor-addon-template tpl
+          cd tpl
+          git checkout "$TEMPLATE_REF"
+          echo "=== versions in template ==="
+          cat gradle/libs.versions.toml
 
       - name: Unpack source zip into template
         run: |
-          rm -rf src/main/java/* src/main/resources/*
-          mkdir -p /tmp/s src/main/java src/main/resources
+          rm -rf tpl/src/main/java/* tpl/src/main/resources/* tpl/.github
+          mkdir -p /tmp/s tpl/src/main/java tpl/src/main/resources
           unzip -q coindebug-merged.zip -d /tmp/s
-          rsync -am --include='*/' --include='*.java' --exclude='*' /tmp/s/ src/main/java/
-          rsync -am --exclude='*.java' --exclude='META-INF/' /tmp/s/ src/main/resources/
+          rsync -am --include='*/' --include='*.java' --exclude='*' /tmp/s/ tpl/src/main/java/
+          rsync -am --exclude='*.java' --exclude='META-INF/' /tmp/s/ tpl/src/main/resources/
 
       - name: Build
+        working-directory: tpl
         run: |
           chmod +x gradlew
           ./gradlew build --no-daemon
@@ -32,4 +42,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mod-jar
-          path: build/libs/*.jar
+          path: tpl/build/libs/*.jar
