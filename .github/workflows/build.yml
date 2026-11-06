@@ -1,10 +1,9 @@
 name: Build
+
 on:
   push:
+  pull_request:
   workflow_dispatch:
-
-env:
-  TEMPLATE_REF: master   # có thể đổi thành mã commit cụ thể nếu cần
 
 jobs:
   build:
@@ -12,34 +11,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Unzip project
+        run: |
+          for f in *.zip; do unzip -q -o "$f"; done
+          ls -la
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
 
-      - name: Get Meteor addon template
-        run: |
-          git clone https://github.com/MeteorDevelopment/meteor-addon-template tpl
-          cd tpl
-          git checkout "$TEMPLATE_REF"
-          echo "=== versions in template ==="
-          cat gradle/libs.versions.toml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-      - name: Unpack source zip into template
-        run: |
-          rm -rf tpl/src/main/java/* tpl/src/main/resources/* tpl/.github
-          mkdir -p /tmp/s tpl/src/main/java tpl/src/main/resources
-          unzip -q coindebug-merged.zip -d /tmp/s
-          rsync -am --include='*/' --include='*.java' --exclude='*' /tmp/s/ tpl/src/main/java/
-          rsync -am --exclude='*.java' --exclude='META-INF/' /tmp/s/ tpl/src/main/resources/
-
-      - name: Build
-        working-directory: tpl
+      # Resolve dependencies trước để Gradle download yarn jar vào cache
+      - name: Download dependencies (resolve Yarn jar)
         run: |
           chmod +x gradlew
-          ./gradlew build --no-daemon
+          ./gradlew dependencies --no-daemon -q
+
+      - name: Remap intermediary -> Yarn
+        run: |
+          YARN=$(grep '^yarn_mappings=' gradle.properties | cut -d= -f2)
+          YARN_JAR=$(find ~/.gradle/caches -name "yarn-${YARN}-v2.jar" 2>/dev/null | head -1)
+          if [ -z "$YARN_JAR" ]; then
+            echo "ERROR: yarn jar not found in gradle cache" >&2
+            exit 1
+          fi
+          echo "Using yarn jar: $YARN_JAR"
+          python tools/remap_intermediary.py "$YARN_JAR" src/main/java/dev/bypass src/main/java/x10n src/main/java/kren/debug/modules/redcore src/main/java/kren/debug/modules/zdebug
+
+      - name: Build
+        run: ./gradlew build --no-daemon
+
+      - name: Obfuscate
+        run: |
+          set -o pipefail
+          ./gradlew obfuscate --no-daemon 2>&1 | tee /tmp/obf.log
+          echo "=== build/libs ==="
+          ls -lh build/libs/
+          OBF=$(ls build/libs/*-obf.jar 2>/dev/null | head -1)
+          if [ -z "$OBF" ]; then
+            echo "ERROR: obf jar was not created"
+            cat /tmp/obf.log
+            exit 1
+          fi
+          echo "OK: $OBF"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mod-jar
-          path: tpl/build/libs/*.jar
+          name: kren-debug
+          path: |
+            build/libs/*.jar
+            !build/libs/*-dev.jar
+            !build/libs/*-obf.jar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kren-debug-obf
+          path: build/libs/*-obf.jar
